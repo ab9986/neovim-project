@@ -4,6 +4,7 @@ local M = {}
 M.datapath = vim.fn.stdpath("data") -- directory
 M.projectpath = M.datapath .. "/neovim-project" -- directory
 M.historyfile = M.projectpath .. "/history" -- file
+M.cprojectfile = M.projectpath .. "/cproject" -- file
 M.sessionspath = M.datapath .. "/neovim-sessions" --directory
 M.homedir = nil
 M.dir_pretty = nil -- directory of current project (respects user defined symlinks in config)
