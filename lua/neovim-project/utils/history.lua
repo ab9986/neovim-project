@@ -6,7 +6,7 @@ M.recent_projects = nil -- projects from previous neovim sessions
 M.session_projects = {} -- projects from current neovim session
 M.has_watch_setup = false -- file change watch has been setup
 M.history_read = false -- history has been read at least once
-
+M.current_project = nil
 local function open_history(mode)
   path.create_scaffolding()
   return uv.fs_open(path.historyfile, mode, 438)
@@ -19,6 +19,90 @@ local function dir_exists(dir)
     return true
   end
   return false
+end
+
+local function open_cproject(mode)
+  path.create_scaffolding()
+  return uv.fs_open(path.cprojectfile, mode, 438)
+end
+
+local function deserialize_cproject(cproject_data)
+  -- split data to table
+  local cproject = {}
+  for s in cproject_data:gmatch("[^\r\n]+") do
+    if dir_exists(s) then
+      table.insert(cproject, s)
+    end
+  end
+
+  M.current_project = path.delete_duplicates(cproject)
+end
+
+M.get_cproject = function()
+  local file = open_cproject("r")
+  if file == nil then
+    return
+  end
+  local stat,err = uv.fs_fstat(file)
+  if stat == nil then
+      return
+  end
+  local data, err1 =uv.fs_read(file, stat.size, -1)
+  uv.fs_close(file)
+  deserialize_cproject(data)
+end
+
+M.save_cproject = function() 
+  local mode = "w"
+  if M.current_project == nil then
+    mode = "a"
+  end
+  local file = open_cproject(mode)
+  
+  if file ~= nil then
+    local res = path.delete_duplicates(M.current_project)
+    -- Trim table to last 100 entries
+    local len_res = #res
+    local tbl_out
+    if #res > 100 then
+      tbl_out = vim.list_slice(res, len_res - 100, len_res)
+    else
+      tbl_out = res
+    end
+
+    -- Transform table to string
+    local out = ""
+    for _, v in ipairs(tbl_out) do
+      out = out .. v .. "\n"
+    end
+
+    -- Write string out to file and close
+    uv.fs_write(file, out, -1)
+    uv.fs_close(file)
+  end
+end
+
+M.add_cproject = function(dir)
+  if M.current_project == nil then
+    M.current_project = {}
+  end
+  if dir == nil or dir == "" then
+    return
+  end
+  table.insert(M.current_project, dir)
+end
+
+M.delete_cproject = function(dir)
+  if dir == nil or dir == "" then
+    return
+  end
+  if M.current_project then
+    for k, v in pairs(M.current_project) do
+      if v == dir then
+        M.current_project[k] = nil
+      end
+    end
+  end
 end
 
 M.add_session_project = function(dir)
@@ -97,6 +181,8 @@ M.read_projects_from_history = function()
   end)
 end
 
+
+
 local function sanitize_projects()
   local tbl = {}
   if M.recent_projects ~= nil then
@@ -118,9 +204,29 @@ local function sanitize_projects()
   return real_tbl
 end
 
+local function filter_out(a, b)
+  local set = {}
+  for _, v in ipairs(b) do
+    set[v] = true
+  end
+
+  local result = {}
+  for _, v in ipairs(a) do
+    if not set[v] then
+      result[#result + 1] = v
+    end
+  end
+  return result
+end
+
 function M.get_recent_projects()
   M.make_sure_read_projects_from_history()
-  return sanitize_projects()
+  M.get_cproject()
+  if M.current_project ==nil then
+    return sanitize_projects()
+  else
+    return filter_out(sanitize_projects(),M.current_project)
+  end 
 end
 
 function M.get_current_project()
