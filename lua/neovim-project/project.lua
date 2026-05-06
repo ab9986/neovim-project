@@ -101,6 +101,14 @@ M.setup_autocmds = function()
     pattern = "global",
     group = augroup,
     callback = function(event)
+      -- if utils.exists_in_session() then
+      -- local current_dir = vim.fn.getcwd()
+      -- local cwork_dir = vim.fn.fnamemodify(current_dir, ":~")
+      -- history.get_cproject()
+      -- history.delete_cproject(cwork_dir)
+      -- history.save_cproject()
+      -- end 
+
       if path.dir_pretty == nil then
         return
       end
@@ -392,6 +400,9 @@ end
 
 M.switch_project = function(dir)
   debug_log.log("Switching to project: " .. tostring(dir), "switch_project")
+  history.get_cproject()
+  history.add_cproject(dir)
+  history.save_cproject()
 
   if M.in_session() then
     M.switch_after_save_session(dir)
