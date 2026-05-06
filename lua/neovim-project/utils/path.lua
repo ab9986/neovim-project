@@ -1,289 +1,403 @@
-local path = require("neovim-project.utils.path")
 local uv = vim.loop
 local M = {}
 
-M.recent_projects = nil -- projects from previous neovim sessions
-M.session_projects = {} -- projects from current neovim session
-M.has_watch_setup = false -- file change watch has been setup
-M.history_read = false -- history has been read at least once
-M.current_project = nil
-local function open_history(mode)
-  path.create_scaffolding()
-  return uv.fs_open(path.historyfile, mode, 438)
-end
+M.datapath = vim.fn.stdpath("data") -- directory
+M.projectpath = M.datapath .. "/neovim-project" -- directory
+M.historyfile = M.projectpath .. "/history" -- file
+M.cprojectfile = M.projectpath .. "/cproject" -- file
+M.sessionspath = M.datapath .. "/neovim-sessions" --directory
+M.homedir = nil
+M.dir_pretty = nil -- directory of current project (respects user defined symlinks in config)
 
-local function dir_exists(dir)
-  dir = dir:gsub("^~", path.homedir)
-  local stat = uv.fs_stat(dir)
-  if stat ~= nil and stat.type == "directory" then
-    return true
+---Convert glob-style wildcards to Lua pattern
+---@param wildcard string wildcard string
+---@param resolve boolean whether or not to resolve symlinks for the "prefix"
+---@param eol boolean? whether or not to add `$` at the end of the pattern, default is true
+---@return string converted Lua pattern
+local function wildcard_to_pattern(wildcard, resolve, eol)
+  if not wildcard or wildcard == "" then
+    return ""
   end
-  return false
-end
-
-local function open_cproject(mode)
-  path.create_scaffolding()
-  return uv.fs_open(path.cprojectfile, mode, 438)
-end
-
-local function deserialize_cproject(cproject_data)
-  -- split data to table
-  local cproject = {}
-  for s in cproject_data:gmatch("[^\r\n]+") do
-    if dir_exists(s) then
-      table.insert(cproject, s)
-    end
+  if eol == nil then
+    eol = true
   end
 
-  M.current_project = path.delete_duplicates(cproject)
-end
+  -- Expand to absolute path, fnamemodify can work with wildcards
+  local pattern = vim.fn.fnamemodify(wildcard, ":p")
+  local pattern_end = pattern:sub(#pattern, #pattern)
+  if pattern_end == "/" or pattern_end == "\\" then
+    pattern = pattern:sub(1, #pattern - 1)
+  end
 
-M.get_cproject = function()
-  local file = open_cproject("r")
-  if file == nil then
-    return
+  if resolve then
+    -- It turns out that `vim.fn.resolve` can actually resolve the "prefix" even if it is a wildcard
+    pattern = vim.fn.resolve(pattern)
   end
-  local stat,err = uv.fs_fstat(file)
-  if stat == nil then
-      return
-  end
-  local data, err1 =uv.fs_read(file, stat.size, -1)
-  uv.fs_close(file)
-  deserialize_cproject(data)
-end
 
-M.save_cproject = function() 
-  local mode = "w"
-  if M.current_project == nil then
-    mode = "a"
-  end
-  local file = open_cproject(mode)
-  
-  if file ~= nil then
-    local res = path.delete_duplicates(M.current_project)
-    -- Trim table to last 100 entries
-    local len_res = #res
-    local tbl_out
-    if #res > 100 then
-      tbl_out = vim.list_slice(res, len_res - 100, len_res)
+  -- Escape special characters for Lua patterns (except wildcards we need to handle specially)
+  pattern = pattern:gsub("([%%%.%+%-%$%^%(%)%]])", "%%%1")
+
+  -- Handle the beginning of the pattern
+  local start_pattern = "^"
+
+  -- Keep track of current position
+  local i = 1
+  local len = #pattern
+  local result = start_pattern
+
+  while i <= len do
+    local c = pattern:sub(i, i)
+
+    if c == "?" then
+      -- ? matches one character, but not path separators
+      result = result .. "[^/\\]"
+      i = i + 1
+    elseif c == "*" then
+      if i < len and pattern:sub(i + 1, i + 1) == "*" then
+        -- ** recursively matches all directories
+        if i + 2 <= len and (pattern:sub(i + 2, i + 2) == "/" or pattern:sub(i + 2, i + 2) == "\\") then
+          -- Handle **/ or **\ patterns, match any level of directories
+          result = result .. ".*"
+          i = i + 3
+        else
+          -- Standalone ** treated as *
+          if i == 1 or pattern:sub(i - 1, i - 1) == "." then
+            -- Patterns starting with .* can match hidden files
+            result = result .. ".*"
+          else
+            -- * doesn't match files starting with a dot (nosuf=true)
+            result = result .. "([^.][^/\\]*)"
+          end
+          i = i + 2
+        end
+      else
+        -- Single * case
+        if i == 1 or pattern:sub(i - 1, i - 1) == "." then
+          -- Patterns starting with .* can match hidden files
+          result = result .. "[^/\\]*"
+        else
+          -- * doesn't match files starting with a dot (nosuf=true)
+          result = result .. "([^.][^/\\]*)"
+        end
+        i = i + 1
+      end
+    elseif c == "[" then
+      -- Handle [abc] character classes
+      local closing = pattern:find("]", i + 1)
+      if closing then
+        if pattern:sub(i + 1, i + 1) == "!" then
+          -- Handle [!abc] character classes
+          result = result .. "[^"
+          i = i + 2
+        end
+        result = result .. pattern:sub(i, closing)
+        i = closing + 1
+      else
+        -- No closing bracket found, treat as a normal character
+        result = result .. "%["
+        i = i + 1
+      end
+    elseif c == "/" or c == "\\" then
+      -- Handle path separators uniformly
+      result = result .. "[/\\]"
+      i = i + 1
     else
-      tbl_out = res
-    end
-
-    -- Transform table to string
-    local out = ""
-    for _, v in ipairs(tbl_out) do
-      out = out .. v .. "\n"
-    end
-
-    -- Write string out to file and close
-    uv.fs_write(file, out, -1)
-    uv.fs_close(file)
-  end
-end
-
-M.add_cproject = function(dir)
-  if M.current_project == nil then
-    M.current_project = {}
-  end
-  if dir == nil or dir == "" then
-    return
-  end
-  table.insert(M.current_project, dir)
-end
-
-M.delete_cproject = function(dir)
-  if dir == nil or dir == "" then
-    return
-  end
-  if M.current_project then
-    for k, v in pairs(M.current_project) do
-      if v == dir then
-        M.current_project[k] = nil
-      end
-    end
-  end
-end
-
-M.add_session_project = function(dir)
-  table.insert(M.session_projects, dir)
-end
-
-M.delete_project = function(dir)
-  if dir == nil or dir == "" then
-    return
-  end
-  if M.recent_projects then
-    for k, v in pairs(M.recent_projects) do
-      if v == dir then
-        M.recent_projects[k] = nil
-      end
-    end
-  end
-  if M.session_projects then
-    for k, v in pairs(M.session_projects) do
-      if v == dir then
-        M.session_projects[k] = nil
-      end
-    end
-  end
-end
-
-local function deserialize_history(history_data)
-  -- split data to table
-  local projects = {}
-  for s in history_data:gmatch("[^\r\n]+") do
-    if dir_exists(s) then
-      table.insert(projects, s)
+      -- Normal characters
+      result = result .. c
+      i = i + 1
     end
   end
 
-  M.recent_projects = path.delete_duplicates(projects)
-end
-
-local function setup_watch()
-  -- Only runs once
-  if M.has_watch_setup == false then
-    M.has_watch_setup = true
-    local event = uv.new_fs_event()
-    if event == nil then
-      return
-    end
-    event:start(path.projectpath, {}, function(err, _, events)
-      if err ~= nil then
-        return
-      end
-      if events["change"] then
-        M.recent_projects = nil
-        M.read_projects_from_history()
-      end
-    end)
-  end
-end
-
-M.read_projects_from_history = function()
-  local file = open_history("r")
-  setup_watch()
-  if file == nil then
-    M.history_read = true
-    return
-  end
-  uv.fs_fstat(file, function(_, stat)
-    if stat == nil then
-      M.history_read = true
-      return
-    end
-    uv.fs_read(file, stat.size, -1, function(_, data)
-      uv.fs_close(file, function(_, _) end)
-      deserialize_history(data)
-      M.history_read = true
-    end)
-  end)
-end
-
-
-
-local function sanitize_projects()
-  local tbl = {}
-  if M.recent_projects ~= nil then
-    vim.list_extend(tbl, M.recent_projects)
-    vim.list_extend(tbl, M.session_projects)
-  else
-    tbl = M.session_projects
+  if eol then
+    result = result .. "$" -- Add ending anchor
   end
 
-  tbl = path.delete_duplicates(tbl)
-
-  local real_tbl = {}
-  for _, dir in ipairs(tbl) do
-    if dir_exists(dir) then
-      table.insert(real_tbl, dir)
-    end
-  end
-
-  return real_tbl
-end
-
-local function filter_out(a, b)
-  local set = {}
-  for _, v in ipairs(b) do
-    set[v] = true
-  end
-
-  local result = {}
-  for _, v in ipairs(a) do
-    if not set[v] then
-      result[#result + 1] = v
-    end
-  end
   return result
 end
 
-function M.get_recent_projects()
-  M.make_sure_read_projects_from_history()
-  M.get_cproject()
-  if M.current_project ==nil then
-    return sanitize_projects()
-  else
-    return filter_out(sanitize_projects(),M.current_project)
-  end 
+local function is_subdirectory(parent, sub)
+  return sub:sub(1, #parent) == parent
 end
 
-function M.get_current_project()
-  local projects = M.get_recent_projects()
-
-  if #M.session_projects > 0 then
-    return M.session_projects[#M.session_projects]
+local function find_closest_parent(directories, subdirectory)
+  local closest_parent = nil
+  local closest_length = 0
+  subdirectory = M.short_path(subdirectory)
+  for _, dir in ipairs(directories) do
+    dir = M.short_path(dir)
+    if is_subdirectory(dir, subdirectory) then
+      local length = #dir
+      if length > closest_length then
+        closest_length = length
+        closest_parent = dir
+      end
+    end
   end
-
-  if projects and #projects > 0 then
-    return projects[#projects]
-  end
-
-  return ""
+  return closest_parent
 end
 
-function M.make_sure_read_projects_from_history()
-  if M.history_read == false then
-    M.read_projects_from_history()
-    vim.wait(200, function()
-      return M.history_read
+M.get_all_projects = function(patterns)
+  -- Get all existing projects from patterns
+  local projects = {}
+  if patterns == nil then
+    patterns = require("neovim-project.config").options.projects
+  end
+
+  local ignore_patterns = require("neovim-project.config").options.ignore_projects or {}
+  local ignore_set = {}
+  for _, ignore_pattern in ipairs(ignore_patterns) do
+    local ignore_tbl = vim.fn.glob(ignore_pattern, true, true, true)
+    for _, ignore_path in ipairs(ignore_tbl) do
+      if vim.fn.isdirectory(ignore_path) == 1 then
+        ignore_set[M.resolve(ignore_path)] = true
+      end
+    end
+  end
+
+  for _, pattern in ipairs(patterns) do
+    local tbl = vim.fn.glob(pattern, true, true, true)
+    for _, path in ipairs(tbl) do
+      if vim.fn.isdirectory(path) == 1 then
+        local resolved = M.resolve(path)
+        local is_ignored = ignore_set[resolved] == true
+        if not is_ignored then
+          local short = M.short_path(path)
+          if not vim.tbl_contains(projects, short) then
+            table.insert(projects, short)
+          end
+        end
+      end
+    end
+  end
+
+  return projects
+end
+
+function M.init()
+  M.datapath = vim.fn.expand(require("neovim-project.config").options.datapath)
+  M.projectpath = M.datapath .. "/neovim-project" -- directory
+  M.historyfile = M.projectpath .. "/history" -- file
+  M.sessionspath = M.datapath .. "/neovim-sessions" --directory
+  M.homedir = vim.fn.expand("~")
+end
+
+M.get_all_projects_with_sorting = function()
+  -- Get all projects but with specific sorting
+  local sorting = require("neovim-project.config").options.picker.opts.sorting
+  local all_projects = M.get_all_projects()
+
+  -- Sort by most recent projects first
+  if sorting == "history" then
+    local recent = require("neovim-project.utils.history").get_recent_projects()
+    recent = M.fix_symlinks_for_history(recent)
+
+    -- Reverse projects
+    for i = 1, math.floor(#recent / 2) do
+      recent[i], recent[#recent - i + 1] = recent[#recent - i + 1], recent[i]
+    end
+
+    -- Add all projects and prioritise history
+    local seen, projects = {}, {}
+    for _, project in ipairs(vim.list_extend(recent, all_projects)) do
+      if not seen[project] then
+        table.insert(projects, project)
+        seen[project] = true
+      end
+    end
+    return projects
+
+  -- Sort alphabetically ascending by project name
+  elseif sorting == "alphabetical_name" then
+    table.sort(all_projects, function(a, b)
+      local name_a = a:match(".*/([^/]+)$") or a
+      local name_b = b:match(".*/([^/]+)$") or b
+      return name_a:lower() < name_b:lower()
     end)
+    return all_projects
+
+  -- Sort alphabetically ascending by project path
+  elseif sorting == "alphabetical_path" then
+    table.sort(all_projects)
+    return all_projects
+
+  -- Default sort based on patterns
+  else
+    return all_projects
   end
 end
 
-M.write_projects_to_history = function()
-  -- Write projects is synchronous
-  -- because it runs when vim ends
-  M.make_sure_read_projects_from_history()
-  local mode = "w"
-  if M.recent_projects == nil then
-    mode = "a"
+M.short_path = function(path)
+  -- Reduce file name to be relative to the home directory, if possible.
+  path = M.resolve(path)
+  return vim.fn.fnamemodify(path, ":~")
+end
+
+M.cwd = function()
+  -- Get current working directory in short form
+  return M.short_path(uv.cwd())
+end
+
+M.create_scaffolding = function(callback)
+  -- Create directories
+  if callback ~= nil then -- async
+    uv.fs_mkdir(M.projectpath, 448, callback)
+  else -- sync
+    uv.fs_mkdir(M.projectpath, 448)
   end
-  local file = open_history(mode)
+end
 
-  if file ~= nil then
-    local res = sanitize_projects()
+M.resolve = function(filename)
+  -- Replace symlink with real path
+  filename = vim.fn.expand(filename)
+  return vim.fn.resolve(filename)
+end
 
-    -- Trim table to last 100 entries
-    local len_res = #res
-    local tbl_out
-    if #res > 100 then
-      tbl_out = vim.list_slice(res, len_res - 100, len_res)
+M.delete_duplicates = function(tbl)
+  -- Remove duplicates from table, preserving order
+  local cache_dict = {}
+  for _, v in ipairs(tbl) do
+    if cache_dict[v] == nil then
+      cache_dict[v] = 1
     else
-      tbl_out = res
+      cache_dict[v] = cache_dict[v] + 1
     end
-
-    -- Transform table to string
-    local out = ""
-    for _, v in ipairs(tbl_out) do
-      out = out .. v .. "\n"
-    end
-
-    -- Write string out to file and close
-    uv.fs_write(file, out, -1)
-    uv.fs_close(file)
   end
+
+  local res = {}
+  for _, v in ipairs(tbl) do
+    if cache_dict[v] == 1 then
+      table.insert(res, v)
+    else
+      cache_dict[v] = cache_dict[v] - 1
+    end
+  end
+  return res
+end
+
+local find_longest_matched_pattern = function(patterns, dir, resolve)
+  local longest_pattern = nil
+  local longest_length = 0
+  for _, pattern in ipairs(patterns) do
+    local lua_pattern = wildcard_to_pattern(pattern, resolve, false)
+    local startindex, endindex = dir:find(lua_pattern)
+    if startindex ~= nil and endindex ~= nil then
+      local len = endindex - startindex + 1
+      if len > longest_length then
+        longest_length = len
+        longest_pattern = pattern
+      end
+    end
+  end
+
+  return longest_pattern
+end
+
+M.fix_symlinks_for_history = function(dirs)
+  -- Replace paths with paths from `projects` option
+  local patterns = require("neovim-project.config").options.projects
+  local follow_symlinks = require("neovim-project.config").options.follow_symlinks
+
+  if follow_symlinks == true or follow_symlinks == "full" then
+    local projects = M.get_all_projects()
+    for i, dir in ipairs(dirs) do
+      local dir_resolved
+      for _, path in ipairs(projects) do
+        local path_resolved
+        if dir_resolved == nil then
+          if path_resolved == nil then
+            if path == dir then
+              dirs[i] = path
+              break
+            end
+            path_resolved = M.resolve(path)
+          end
+          if path_resolved == dir then
+            dirs[i] = path
+            break
+          end
+          dir_resolved = M.resolve(dir)
+        end
+        if path_resolved == nil then
+          if path == dir_resolved then
+            dirs[i] = path
+            break
+          end
+          path_resolved = M.resolve(path)
+        end
+        if path_resolved == dir_resolved then
+          dirs[i] = path
+          break
+        end
+      end
+    end
+  else
+    local resolve
+    if follow_symlinks == "partial" then
+      resolve = true
+    elseif not follow_symlinks or follow_symlinks == "none" then
+      resolve = false
+    end
+    for i, dir in ipairs(dirs) do
+      local dir_resolved
+      for _, pattern in ipairs(patterns) do
+        local lua_pattern = wildcard_to_pattern(pattern, resolve, true)
+        local startindex, endindex
+        if dir_resolved == nil then
+          startindex, endindex = dir:find(lua_pattern)
+          if startindex == nil or endindex == nil then
+            dir_resolved = M.resolve(dir)
+            startindex, endindex = dir_resolved:find(lua_pattern)
+          end
+        else
+          startindex, endindex = dir_resolved:find(lua_pattern)
+        end
+        if startindex ~= nil and endindex ~= nil then
+          local projects = M.get_all_projects({ pattern })
+          for _, path in ipairs(projects) do
+            if path == dir_resolved or M.resolve(path) == dir_resolved then
+              dirs[i] = path
+              break
+            end
+          end
+          break
+        end
+      end
+    end
+  end
+  -- remove duplicates
+  return M.delete_duplicates(dirs)
+end
+
+M.chdir_closest_parent_project = function(dir)
+  local patterns = require("neovim-project.config").options.projects
+  local follow_symlinks = require("neovim-project.config").options.follow_symlinks
+
+  -- returns the parent project and chdir to that parent
+  -- if no parent project returns nil
+  -- if dir is a project return dir
+  local dir_resolved = dir or M.resolve(M.cwd())
+
+  local parent
+  if follow_symlinks == true or follow_symlinks == "full" then
+    parent = find_closest_parent(M.get_all_projects(), dir_resolved)
+  else
+    local resolve
+    if follow_symlinks == "partial" then
+      resolve = true
+    elseif not follow_symlinks or follow_symlinks == "none" then
+      resolve = false
+    end
+    local pattern = find_longest_matched_pattern(patterns, dir_resolved, resolve)
+    if pattern then
+      parent = find_closest_parent(M.get_all_projects({ pattern }), dir_resolved)
+    end
+  end
+
+  if parent then
+    M.dir_pretty = M.short_path(parent) -- store path with user defined symlinks
+    vim.api.nvim_set_current_dir(parent)
+  end
+  return parent
 end
 
 return M
