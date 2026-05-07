@@ -43,8 +43,8 @@ M.setup_autocmds = function()
     once = true,
     callback = function()
       if path.dir_pretty ~= nil then
-        history.add_session_project(path.dir_pretty)
-      end
+        history.add_session_project(path.dir_pretty) 
+      end 
     end,
   })
   -- switch project after save previous session
@@ -52,7 +52,12 @@ M.setup_autocmds = function()
     pattern = "SessionSavePost",
     group = augroup,
     callback = function()
-      M.save_project_waiting = false
+      local current_dir = vim.fn.getcwd()
+      local cwork_dir = vim.fn.fnamemodify(current_dir, ":~")
+      history.get_cproject()
+      history.delete_cproject(cwork_dir)
+      history.save_cproject()
+      M.save_project_waiting = false 
     end,
   })
   -- 1. Add state data to the session file via global variable
@@ -73,6 +78,11 @@ M.setup_autocmds = function()
     pattern = "SessionLoadPost",
     group = augroup,
     callback = function()
+      local current_dir = vim.fn.getcwd()
+      local cwork_dir = vim.fn.fnamemodify(current_dir, ":~")
+      history.get_cproject()
+      history.add_cproject(cwork_dir)
+      history.save_cproject()
       if config.options.filetype_autocmd_timeout > 0 then
         vim.defer_fn(function()
           vim.api.nvim_command("silent! doautocmd FileType")
@@ -121,6 +131,9 @@ M.setup_autocmds = function()
         debug_log.log("Exiting session due to external directory change: " .. path.dir_pretty, "DirChangedPre")
         history.write_projects_to_history()
         local dir = path.dir_pretty
+        history.get_cproject()
+        history.delete_cproject(path.dir_pretty)
+        history.save_cproject()
         vim.notify("CWD Changed! Exit from session " .. dir, vim.log.levels.INFO, { title = "Neovim Project" })
         path.dir_pretty = nil
         utils.is_session = false
