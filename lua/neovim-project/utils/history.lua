@@ -109,6 +109,17 @@ M.add_session_project = function(dir)
   table.insert(M.session_projects, dir)
 end
 
+M.add_recent_project = function(dir) 
+  if dir == nil or dir == "" then
+    return
+  end
+  if M.recent_projects then
+    table.insert(M.recent_projects, dir)
+    M.write_projects_to_history()
+  end
+end
+
+
 M.delete_project = function(dir)
   if dir == nil or dir == "" then
     return
@@ -127,6 +138,7 @@ M.delete_project = function(dir)
       end
     end
   end
+  M.write_projects_to_history()
 end
 
 local function deserialize_history(history_data)
@@ -163,22 +175,29 @@ end
 
 M.read_projects_from_history = function()
   local file = open_history("r")
-  setup_watch()
+  -- setup_watch()
   if file == nil then
-    M.history_read = true
+    -- M.history_read = true
     return
   end
-  uv.fs_fstat(file, function(_, stat)
-    if stat == nil then
-      M.history_read = true
+  local stat,err = uv.fs_fstat(file)
+  if stat == nil then
       return
-    end
-    uv.fs_read(file, stat.size, -1, function(_, data)
-      uv.fs_close(file, function(_, _) end)
-      deserialize_history(data)
-      M.history_read = true
-    end)
-  end)
+  end
+  local data, err1 =uv.fs_read(file, stat.size, -1)
+  uv.fs_close(file)
+  deserialize_history(data)
+  -- uv.fs_fstat(file, function(_, stat)
+  --   if stat == nil then
+  --     M.history_read = true
+  --     return
+  --   end
+  --   uv.fs_read(file, stat.size, -1, function(_, data)
+  --     uv.fs_close(file, function(_, _) end)
+  --     deserialize_history(data)
+  --     M.history_read = true
+  --   end)
+  -- end)
 end
 
 
@@ -220,7 +239,7 @@ local function filter_out(a, b)
 end
 
 function M.get_recent_projects()
-  M.make_sure_read_projects_from_history()
+  M.read_projects_from_history()
   M.get_cproject()
   if M.current_project ==nil then
     return sanitize_projects()
@@ -244,18 +263,18 @@ function M.get_current_project()
 end
 
 function M.make_sure_read_projects_from_history()
-  if M.history_read == false then
-    M.read_projects_from_history()
-    vim.wait(200, function()
-      return M.history_read
-    end)
-  end
+  -- if M.history_read == false then
+  --   M.read_projects_from_history()
+  --   vim.wait(200, function()
+  --     return M.history_read
+  --   end)
+  -- end
 end
 
 M.write_projects_to_history = function()
   -- Write projects is synchronous
   -- because it runs when vim ends
-  M.make_sure_read_projects_from_history()
+  -- M.make_sure_read_projects_from_history()
   local mode = "w"
   if M.recent_projects == nil then
     mode = "a"

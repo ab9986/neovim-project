@@ -31,7 +31,7 @@ M.setup_autocmds = function()
     pattern = "*",
     group = augroup,
     callback = function()
-      history.write_projects_to_history()
+      -- history.write_projects_to_history()
       -- Cleanup git watcher
       M.stop_git_head_watcher()
     end,
@@ -52,10 +52,8 @@ M.setup_autocmds = function()
     pattern = "SessionSavePost",
     group = augroup,
     callback = function()
-      local current_dir = vim.fn.getcwd()
-      local cwork_dir = vim.fn.fnamemodify(current_dir, ":~")
       history.get_cproject()
-      history.delete_cproject(cwork_dir)
+      history.delete_cproject(path.cwd())
       history.save_cproject()
       M.save_project_waiting = false 
     end,
@@ -78,10 +76,8 @@ M.setup_autocmds = function()
     pattern = "SessionLoadPost",
     group = augroup,
     callback = function()
-      local current_dir = vim.fn.getcwd()
-      local cwork_dir = vim.fn.fnamemodify(current_dir, ":~")
       history.get_cproject()
-      history.add_cproject(cwork_dir)
+      history.add_cproject(path.cwd())
       history.save_cproject()
       if config.options.filetype_autocmd_timeout > 0 then
         vim.defer_fn(function()
@@ -110,14 +106,7 @@ M.setup_autocmds = function()
   vim.api.nvim_create_autocmd({ "DirChangedPre" }, {
     pattern = "global",
     group = augroup,
-    callback = function(event)
-      -- if utils.exists_in_session() then
-      -- local current_dir = vim.fn.getcwd()
-      -- local cwork_dir = vim.fn.fnamemodify(current_dir, ":~")
-      -- history.get_cproject()
-      -- history.delete_cproject(cwork_dir)
-      -- history.save_cproject()
-      -- end 
+    callback = function(event) 
 
       if path.dir_pretty == nil then
         return
@@ -129,12 +118,15 @@ M.setup_autocmds = function()
       if path.dir_pretty ~= path.short_path(event.file) then
         -- directory changed from outside
         debug_log.log("Exiting session due to external directory change: " .. path.dir_pretty, "DirChangedPre")
-        history.write_projects_to_history()
+        -- history.write_projects_to_history()
         local dir = path.dir_pretty
         history.get_cproject()
         history.delete_cproject(path.dir_pretty)
         history.save_cproject()
         vim.notify("CWD Changed! Exit from session " .. dir, vim.log.levels.INFO, { title = "Neovim Project" })
+        if M.in_session() then
+          manager.save_current_session()
+        end
         path.dir_pretty = nil
         utils.is_session = false
         -- touch session file to update mtime and auto load it on next start
@@ -149,6 +141,22 @@ M.setup_autocmds = function()
     end,
   })
 end
+vim.api.nvim_create_autocmd("DirChanged", {
+  pattern = "global",
+  callback = function()
+    vim.schedule(function()
+      local cwork_dir = path.cwd()
+      -- print("cwork_dir:" .. cwork_dir)
+      history.get_recent_projects() 
+      if not M.in_session() and vim.tbl_contains(history.current_project, cwork_dir) == false then 
+        M.switch_project(cwork_dir)
+        history.get_cproject()
+        history.add_cproject(cwork_dir)
+        history.save_cproject()
+      end
+    end)
+  end,
+})
 
 local function switch_project_callback(dir)
   M.switch_project(dir)
@@ -413,9 +421,9 @@ end
 
 M.switch_project = function(dir)
   debug_log.log("Switching to project: " .. tostring(dir), "switch_project")
-  history.get_cproject()
-  history.add_cproject(dir)
-  history.save_cproject()
+  -- history.get_cproject()
+  -- history.add_cproject(dir)
+  -- history.save_cproject()
 
   if M.in_session() then
     M.switch_after_save_session(dir)
