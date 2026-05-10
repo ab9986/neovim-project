@@ -55,6 +55,7 @@ end
 M.save_cproject = function() 
   local mode = "w"
   if M.current_project == nil then
+    M.current_project = {}
     mode = "a"
   end
   local file = open_cproject(mode)
