@@ -148,7 +148,7 @@ vim.api.nvim_create_autocmd("DirChanged", {
       local cwork_dir = path.cwd()
       history.get_recent_projects()
       if vim.tbl_contains(history.current_project, cwork_dir) == true then
-        vim.notify(cwork_dir .. " is loading")
+        vim.notify(cwork_dir .. " already loaded")
       end
       if not M.in_session() and vim.tbl_contains(history.current_project, cwork_dir) == false then 
         M.switch_project(cwork_dir)
