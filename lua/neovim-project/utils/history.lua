@@ -243,6 +243,7 @@ function M.get_recent_projects()
   M.read_projects_from_history()
   M.get_cproject()
   if M.current_project ==nil then
+    M.current_project = {}
     return sanitize_projects()
   else
     return filter_out(sanitize_projects(),M.current_project)
