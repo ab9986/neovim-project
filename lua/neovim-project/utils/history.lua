@@ -84,6 +84,7 @@ M.save_cproject = function()
 end
 
 M.add_cproject = function(dir)
+  M.get_cproject()
   if M.current_project == nil then
     M.current_project = {}
   end
@@ -91,9 +92,11 @@ M.add_cproject = function(dir)
     return
   end
   table.insert(M.current_project, dir)
+  M.save_cproject()
 end
 
 M.delete_cproject = function(dir)
+  M.get_cproject()
   if dir == nil or dir == "" then
     return
   end
@@ -104,6 +107,7 @@ M.delete_cproject = function(dir)
       end
     end
   end
+  M.save_cproject()
 end
 
 M.add_session_project = function(dir)

@@ -52,9 +52,7 @@ M.setup_autocmds = function()
     pattern = "SessionSavePost",
     group = augroup,
     callback = function()
-      history.get_cproject()
       history.delete_cproject(path.cwd())
-      history.save_cproject()
       M.save_project_waiting = false 
     end,
   })
@@ -76,9 +74,7 @@ M.setup_autocmds = function()
     pattern = "SessionLoadPost",
     group = augroup,
     callback = function()
-      history.get_cproject()
       history.add_cproject(path.cwd())
-      history.save_cproject()
       if config.options.filetype_autocmd_timeout > 0 then
         vim.defer_fn(function()
           vim.api.nvim_command("silent! doautocmd FileType")
@@ -120,9 +116,7 @@ M.setup_autocmds = function()
         debug_log.log("Exiting session due to external directory change: " .. path.dir_pretty, "DirChangedPre")
         -- history.write_projects_to_history()
         local dir = path.dir_pretty
-        history.get_cproject()
         history.delete_cproject(path.dir_pretty)
-        history.save_cproject()
         vim.notify("CWD Changed! Exit from session " .. dir, vim.log.levels.INFO, { title = "Neovim Project" })
         if M.in_session() then
           manager.save_current_session()
@@ -152,9 +146,7 @@ vim.api.nvim_create_autocmd("DirChanged", {
       end
       if not M.in_session() and vim.tbl_contains(history.current_project, cwork_dir) == false then 
         M.switch_project(cwork_dir)
-        history.get_cproject()
         history.add_cproject(cwork_dir)
-        history.save_cproject()
       end
     end)
   end,
