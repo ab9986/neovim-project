@@ -33,11 +33,11 @@ M.setup_autocmds = function()
     callback = function()
       -- history.write_projects_to_history()
       -- Cleanup git watcher
-      -- if M.in_session() then
-      --   history.delete_cproject(path.cwd())
-      --   manager.save_current_session()
-      -- end
       M.stop_git_head_watcher()
+      local config = require('session_manager.config')
+      if M.in_session() and  not config.autosave_last_session then
+        manager.save_current_session()
+      end      
     end,
   })
   -- add project to history when open nvim in project's directory
