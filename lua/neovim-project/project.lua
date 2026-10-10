@@ -33,6 +33,10 @@ M.setup_autocmds = function()
     callback = function()
       -- history.write_projects_to_history()
       -- Cleanup git watcher
+      -- if M.in_session() then
+      --   history.delete_cproject(path.cwd())
+      --   manager.save_current_session()
+      -- end
       M.stop_git_head_watcher()
     end,
   })
