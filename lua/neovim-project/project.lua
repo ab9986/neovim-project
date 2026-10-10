@@ -415,9 +415,7 @@ end
 
 M.switch_project = function(dir)
   debug_log.log("Switching to project: " .. tostring(dir), "switch_project")
-  -- history.get_cproject()
   -- history.add_cproject(dir)
-  -- history.save_cproject()
 
   if M.in_session() then
     M.switch_after_save_session(dir)
