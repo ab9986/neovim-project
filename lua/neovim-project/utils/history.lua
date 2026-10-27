@@ -31,7 +31,7 @@ local function deserialize_cproject(cproject_data)
   local cproject = {}
   for s in cproject_data:gmatch("[^\r\n]+") do
     if dir_exists(s) then
-      table.insert(cproject, s)
+      table.insert(cproject, (s:gsub("^%a:", string.upper)))
     end
   end
 
@@ -91,7 +91,7 @@ M.add_cproject = function(dir)
   if dir == nil or dir == "" then
     return
   end
-  table.insert(M.current_project, dir)
+  table.insert(M.current_project, (dir:gsub("^%a:", string.upper)))
   M.save_cproject()
 end
 
@@ -102,7 +102,7 @@ M.delete_cproject = function(dir)
   end
   if M.current_project then
     for k, v in pairs(M.current_project) do
-      if v == dir then
+      if v == dir or v== (dir:gsub("^%a:", string.upper)) then
         M.current_project[k] = nil
       end
     end

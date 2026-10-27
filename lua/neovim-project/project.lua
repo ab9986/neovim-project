@@ -78,7 +78,7 @@ M.setup_autocmds = function()
     pattern = "SessionLoadPost",
     group = augroup,
     callback = function()
-      history.add_cproject(path.cwd())
+      history.add_cproject((path.cwd():gsub("^%a:", string.upper)))
       if config.options.filetype_autocmd_timeout > 0 then
         vim.defer_fn(function()
           vim.api.nvim_command("silent! doautocmd FileType")
@@ -143,7 +143,7 @@ vim.api.nvim_create_autocmd("DirChanged", {
   pattern = "global",
   callback = function()
     vim.schedule(function()
-      local cwork_dir = path.cwd()
+      local cwork_dir = (path.cwd():gsub("^%a:", string.upper))
       history.get_recent_projects()
       if not M.in_session() and vim.tbl_contains(history.current_project, cwork_dir) == true then
         vim.notify(cwork_dir .. " already loaded")
